@@ -62,7 +62,7 @@ const Header = forwardRef((props, ref) => {
                 id="ArrowLeftIcon"
                 icon={<ChevronStartIcon />}
                 content={
-                  <Text size="medium" weight="regular" content="Back"></Text>
+                  <Text size="medium" weight="regular" content="< Back"></Text>
                 }
                 onClick={handleBackClick}
               />
