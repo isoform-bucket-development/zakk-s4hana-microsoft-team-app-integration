@@ -4,6 +4,7 @@
 # Approve SAP S/4HANA Purchase Order in Microsoft Teams App
 In this project, we would like to demonstrate how to integrate the SAP S/4HANA with the Microsoft Teams App, so that the user could perform the SAP S/4HANA purchase order approval in the Microsoft Teams App.
 
+
 ## Business Scenario
 
 ![Business Scenario](./assets/images/Business%20Scenario.png)
