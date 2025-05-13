@@ -1,0 +1,166 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '16.x'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: Install Backend Dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Install Frontend Dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build Frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Run Frontend Tests
+        working-directory: frontend
+        run: npm test -- --watchAll=false
+
+      - name: Run Security Audit
+        run: |
+          npm audit --audit-level=high
+        working-directory: backend
+
+      - name: Upload Frontend Build Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: frontend-build
+          path: frontend/build
+
+      - name: Upload Backend Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: backend-build
+          path: |
+            backend/
+            !backend/node_modules/
+
+  package-teams-app:
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Download Frontend Build
+        uses: actions/download-artifact@v3
+        with:
+          name: frontend-build
+          path: frontend/build
+
+      - name: Package Teams App
+        working-directory: teams-app-package
+        run: |
+          chmod +x ./compress-app.sh
+          ./compress-app.sh
+
+      - name: Upload Teams App Package
+        uses: actions/upload-artifact@v3
+        with:
+          name: teams-app-package
+          path: teams-app-package/*.zip
+
+  deploy-dev:
+    needs: [build-and-test, package-teams-app]
+    runs-on: ubuntu-latest
+    environment: development
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Deploy Backend to Dev
+        env:
+          CF_USERNAME: ${{ secrets.CF_USERNAME }}
+          CF_PASSWORD: ${{ secrets.CF_PASSWORD }}
+          CF_ORG: ${{ secrets.CF_ORG }}
+          CF_SPACE: dev
+        run: |
+          # Install Cloud Foundry CLI
+          curl -L "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v7&source=github" | tar -zx
+          sudo mv cf7 /usr/local/bin/cf
+          cf login -a ${{ secrets.CF_API }} -u $CF_USERNAME -p $CF_PASSWORD -o $CF_ORG -s $CF_SPACE
+          cd backend-build
+          cf push -f manifest.yaml --var environment=dev
+
+      - name: Deploy Frontend to Dev
+        env:
+          CF_USERNAME: ${{ secrets.CF_USERNAME }}
+          CF_PASSWORD: ${{ secrets.CF_PASSWORD }}
+          CF_ORG: ${{ secrets.CF_ORG }}
+          CF_SPACE: dev
+        run: |
+          cd frontend-build
+          cf push -f manifest.yaml --var environment=dev
+
+  deploy-test:
+    needs: deploy-dev
+    runs-on: ubuntu-latest
+    environment: test
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Deploy to Test Environment
+        env:
+          CF_USERNAME: ${{ secrets.CF_USERNAME }}
+          CF_PASSWORD: ${{ secrets.CF_PASSWORD }}
+          CF_ORG: ${{ secrets.CF_ORG }}
+          CF_SPACE: test
+        run: |
+          curl -L "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v7&source=github" | tar -zx
+          sudo mv cf7 /usr/local/bin/cf
+          cf login -a ${{ secrets.CF_API }} -u $CF_USERNAME -p $CF_PASSWORD -o $CF_ORG -s $CF_SPACE
+          
+          cd backend-build
+          cf push -f manifest.yaml --var environment=test
+          
+          cd ../frontend-build
+          cf push -f manifest.yaml --var environment=test
+
+  deploy-prod:
+    needs: deploy-test
+    runs-on: ubuntu-latest
+    environment: production
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Deploy to Production
+        env:
+          CF_USERNAME: ${{ secrets.CF_USERNAME }}
+          CF_PASSWORD: ${{ secrets.CF_PASSWORD }}
+          CF_ORG: ${{ secrets.CF_ORG }}
+          CF_SPACE: prod
+        run: |
+          curl -L "https://packages.cloudfoundry.org/stable?release=linux64-binary&version=v7&source=github" | tar -zx
+          sudo mv cf7 /usr/local/bin/cf
+          cf login -a ${{ secrets.CF_API }} -u $CF_USERNAME -p $CF_PASSWORD -o $CF_ORG -s $CF_SPACE
+          
+          cd backend-build
+          cf push -f manifest.yaml --var environment=prod
+          
+          cd ../frontend-build
+          cf push -f manifest.yaml --var environment=prod
